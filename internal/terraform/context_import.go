@@ -2,6 +2,7 @@ package terraform
 
 import (
 	"github.com/hashicorp/terraform/internal/addrs"
+	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -10,6 +11,10 @@ import (
 type ImportOpts struct {
 	// Targets are the targets to import
 	Targets []*ImportTarget
+
+	// SetVariables are the variables set outside of the configuration,
+	// such as on the command line, in variables files, etc.
+	SetVariables InputValues
 }
 
 // ImportTarget is a single resource to import.
@@ -35,36 +40,46 @@ type ImportTarget struct {
 // Further, this operation also gracefully handles partial state. If during
 // an import there is a failure, all previously imported resources remain
 // imported.
-func (c *Context) Import(opts *ImportOpts) (*states.State, tfdiags.Diagnostics) {
+func (c *Context) Import(config *configs.Config, prevRunState *states.State, opts *ImportOpts) (*states.State, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	// Hold a lock since we can modify our own state here
 	defer c.acquireRun("import")()
 
-	// Copy our own state
-	c.state = c.state.DeepCopy()
+	schemas, moreDiags := c.Schemas(config, nil)
+	diags = diags.Append(moreDiags)
+	if moreDiags.HasErrors() {
+		return nil, diags
+	}
+
+	// Don't modify our caller's state
+	state := prevRunState.DeepCopy()
 
 	// Initialize our graph builder
 	builder := &ImportGraphBuilder{
 		ImportTargets: opts.Targets,
-		Config:        c.config,
+		Config:        config,
 		Components:    c.components,
-		Schemas:       c.schemas,
+		Schemas:       schemas,
 	}
 
-	// Build the graph!
+	// Build the graph
 	graph, graphDiags := builder.Build(addrs.RootModuleInstance)
 	diags = diags.Append(graphDiags)
 	if graphDiags.HasErrors() {
-		return c.state, diags
+		return state, diags
 	}
+
+	variables := mergeDefaultInputVariableValues(opts.SetVariables, config.Module.Variables)
 
 	// Walk it
-	_, walkDiags := c.walk(graph, walkImport, &graphWalkOpts{})
+	_, walkDiags := c.walk(graph, walkImport, &graphWalkOpts{
+		RootVariableValues: variables,
+	})
 	diags = diags.Append(walkDiags)
 	if walkDiags.HasErrors() {
-		return c.state, diags
+		return state, diags
 	}
 
-	return c.state, diags
+	return state, diags
 }

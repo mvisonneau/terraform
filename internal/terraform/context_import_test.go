@@ -16,7 +16,6 @@ func TestContextImport_basic(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-provider")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -33,7 +32,7 @@ func TestContextImport_basic(t *testing.T) {
 		},
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -57,7 +56,6 @@ func TestContextImport_countIndex(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-provider")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -74,7 +72,7 @@ func TestContextImport_countIndex(t *testing.T) {
 		},
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -99,30 +97,29 @@ func TestContextImport_collision(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-provider")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
+	})
 
-		State: states.BuildState(func(s *states.SyncState) {
-			s.SetResourceInstanceCurrent(
-				addrs.Resource{
-					Mode: addrs.ManagedResourceMode,
-					Type: "aws_instance",
-					Name: "foo",
-				}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
-				&states.ResourceInstanceObjectSrc{
-					AttrsFlat: map[string]string{
-						"id": "bar",
-					},
-					Status: states.ObjectReady,
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			addrs.Resource{
+				Mode: addrs.ManagedResourceMode,
+				Type: "aws_instance",
+				Name: "foo",
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				AttrsFlat: map[string]string{
+					"id": "bar",
 				},
-				addrs.AbsProviderConfig{
-					Provider: addrs.NewDefaultProvider("aws"),
-					Module:   addrs.RootModule,
-				},
-			)
-		}),
+				Status: states.ObjectReady,
+			},
+			addrs.AbsProviderConfig{
+				Provider: addrs.NewDefaultProvider("aws"),
+				Module:   addrs.RootModule,
+			},
+		)
 	})
 
 	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
@@ -136,7 +133,7 @@ func TestContextImport_collision(t *testing.T) {
 		},
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, state, &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -175,13 +172,12 @@ func TestContextImport_missingType(t *testing.T) {
 	}
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
 	})
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -227,13 +223,12 @@ func TestContextImport_moduleProvider(t *testing.T) {
 
 	m := testModule(t, "import-provider")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
 	})
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -263,7 +258,6 @@ func TestContextImport_providerModule(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-module")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -289,7 +283,7 @@ func TestContextImport_providerModule(t *testing.T) {
 		return
 	}
 
-	_, diags := ctx.Import(&ImportOpts{
+	_, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.Child("child", addrs.NoKey).ResourceInstance(
@@ -329,15 +323,8 @@ func TestContextImport_providerConfig(t *testing.T) {
 			p := testProvider("aws")
 			m := testModule(t, test.module)
 			ctx := testContext2(t, &ContextOpts{
-				Config: m,
 				Providers: map[addrs.Provider]providers.Factory{
 					addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
-				},
-				Variables: InputValues{
-					"foo": &InputValue{
-						Value:      cty.StringVal("bar"),
-						SourceType: ValueFromCaller,
-					},
 				},
 			})
 
@@ -352,13 +339,19 @@ func TestContextImport_providerConfig(t *testing.T) {
 				},
 			}
 
-			state, diags := ctx.Import(&ImportOpts{
+			state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 				Targets: []*ImportTarget{
 					&ImportTarget{
 						Addr: addrs.RootModuleInstance.ResourceInstance(
 							addrs.ManagedResourceMode, "aws_instance", "foo", addrs.NoKey,
 						),
 						ID: "bar",
+					},
+				},
+				SetVariables: InputValues{
+					"foo": &InputValue{
+						Value:      cty.StringVal("bar"),
+						SourceType: ValueFromCaller,
 					},
 				},
 			})
@@ -389,7 +382,6 @@ func TestContextImport_providerConfigResources(t *testing.T) {
 	pTest := testProvider("test")
 	m := testModule(t, "import-provider-resources")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"):  testProviderFuncFixed(p),
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(pTest),
@@ -407,7 +399,7 @@ func TestContextImport_providerConfigResources(t *testing.T) {
 		},
 	}
 
-	_, diags := ctx.Import(&ImportOpts{
+	_, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -429,7 +421,6 @@ func TestContextImport_refresh(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-provider")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -455,7 +446,7 @@ func TestContextImport_refresh(t *testing.T) {
 		}),
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -480,7 +471,6 @@ func TestContextImport_refreshNil(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-provider")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -503,7 +493,7 @@ func TestContextImport_refreshNil(t *testing.T) {
 		}
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -528,7 +518,6 @@ func TestContextImport_module(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-module")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -545,7 +534,7 @@ func TestContextImport_module(t *testing.T) {
 		},
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.Child("child", addrs.IntKey(0)).ResourceInstance(
@@ -570,7 +559,6 @@ func TestContextImport_moduleDepth2(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-module")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -587,7 +575,7 @@ func TestContextImport_moduleDepth2(t *testing.T) {
 		},
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.Child("child", addrs.IntKey(0)).Child("nested", addrs.NoKey).ResourceInstance(
@@ -612,7 +600,6 @@ func TestContextImport_moduleDiff(t *testing.T) {
 	p := testProvider("aws")
 	m := testModule(t, "import-module")
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
@@ -629,7 +616,7 @@ func TestContextImport_moduleDiff(t *testing.T) {
 		},
 	}
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.Child("child", addrs.IntKey(0)).ResourceInstance(
@@ -692,13 +679,12 @@ func TestContextImport_multiState(t *testing.T) {
 	}
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
 	})
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -767,13 +753,12 @@ func TestContextImport_multiStateSame(t *testing.T) {
 	}
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
 	})
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
@@ -866,13 +851,12 @@ resource "test_resource" "unused" {
 	}
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
 		},
 	})
 
-	state, diags := ctx.Import(&ImportOpts{
+	state, diags := ctx.Import(m, states.NewState(), &ImportOpts{
 		Targets: []*ImportTarget{
 			&ImportTarget{
 				Addr: addrs.RootModuleInstance.ResourceInstance(
